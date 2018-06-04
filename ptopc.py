@@ -6,25 +6,20 @@ import subprocess
 from time import sleep
 import zmq
 
-ctx = zmq.Context()
-sock = ctx.socket(zmq.PUB)
-RE_P = re.compile(r'power1_average: (\d+\.\d+)\n')
-
+SENSORS_POWER = re.compile(r'power1_average: (\d+\.\d+)')
+SENSORS_TEMP = re.compile(r'temp\d+_input: (\d+\.\d+)')
 def monitor_sensors():
-  ret = subprocess.run(['sensors', '-u'], check=True, stdout=subprocess.PIPE, encoding='utf-8')
-  res = ret.stdout
-  match = RE_P.search(res)
-  assert(match is not None)
-  #temp = [t for line in res if res.search('temp: ', line)]
+  res = subprocess.run(['sensors', '-u'], check=True, stdout=subprocess.PIPE, encoding='utf-8').stdout
   return {
-    'temp': [0] * 16,
-    'power': float(match.group(1))
+    'temp': list(map(float, SENSORS_TEMP.findall(res))),
+    'power': sum(map(float, SENSORS_POWER.findall(res)))
   }
 
+CPU_FREQ = re.compile(r'cpu MHz\t\t: (\d+\.\d+)')
 def monitor_cpu():
   ret = []
   with open('/proc/cpuinfo', 'r') as f:
-    ret = [line.split()[3] for line in f if re.search('MHz', line)]
+    ret.extend(map(float, CPU_FREQ.findall(f.read())))
   return ret
 
 def monitor_rapl():
@@ -35,15 +30,24 @@ def monitor_rapl():
       ret.append(int(f.read()) / 10 ** 6)
   return ret
 
+GPU_QUERY = {
+  'freq': 'clocks.applications.gr',
+  'power': 'power.draw',
+  'temp': 'temperature.gpu',
+  'gpu_util': 'utilization.gpu',
+  'mem_util': 'utilization.memory',
+}
+NVIDIA_SMI_QUERY = ','.join(GPU_QUERY.values())
 def monitor_gpu():
+  # nvidia-smi stats -d pwrDraw,temp,gpuUtil,memUtil
   res = subprocess.run(['nvidia-smi',
-      '--query-gpu=clocks.applications.gr,power.draw,temperature.gpu', '--format=csv,noheader,nounits'],
+      f'--query-gpu={NVIDIA_SMI_QUERY}', '--format=csv,noheader,nounits'],
       check=True,
       stdout=subprocess.PIPE,
       encoding='utf-8').stdout
   res = [map(float, row.split(", ")) for row in res.splitlines()]
   ret = list(map(list, zip(*res)))
-  return dict(zip(['freq', 'power', 'temp'], ret))
+  return dict(zip(GPU_QUERY.keys(), ret))
 
 def monitor():
   sensors_stat = monitor_sensors()
@@ -51,7 +55,7 @@ def monitor():
     'cpu': {
       'freq': monitor_cpu(),
       'power': monitor_rapl(),
-      #'temp': sensors_stat['temp'],
+      'temp': sensors_stat['temp'],
     },
     'gpu': monitor_gpu(),
     'sys': {
@@ -64,6 +68,9 @@ if __name__ == '__main__':
   parser.add_argument('--host', default='localhost', type=str)
   parser.add_argument('-p', '--port', default=6666, type=int)
   args = parser.parse_args()
+  # ZMQ PUB to proxy
+  ctx = zmq.Context()
+  sock = ctx.socket(zmq.PUB)
   sock.connect(f'tcp://{args.host}:{args.port}')
   data = {'host': platform.node()}
   while True:
