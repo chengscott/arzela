@@ -1,5 +1,6 @@
 #!/usr/bin/env python3.6
 import argparse
+import json
 import platform
 import re
 import subprocess
@@ -31,10 +32,10 @@ def monitor_cpu():
 
 
 def monitor_rapl():
-  RAPL_PATH_TEMPLATE = '/sys/devices/virtual/powercap/intel-rapl/intel-rapl:{i}/constraint_0_power_limit_uw'
+  RAPL_PATH = '/sys/devices/virtual/powercap/intel-rapl/intel-rapl:{i}/constraint_0_power_limit_uw'
   ret = []
   for j in range(2):
-    with open(RAPL_PATH_TEMPLATE.format(i=j), 'r') as f:
+    with open(RAPL_PATH.format(i=j), 'r') as f:
       ret.append(int(f.read()) / 10**6)
   return ret
 
@@ -64,6 +65,49 @@ def monitor_gpu():
   return dict(zip(GPU_QUERY.keys(), ret))
 
 
+IB_COUNTERS = {
+    'rx_data': 'port_rcv_data',
+    'tx_data': 'port_xmit_data',
+}
+
+
+def monitor_infiniband():
+  IB_PATH = '/sys/class/infiniband/mlx4_0/ports/{port}/counters/{counter}'
+  ret = {}
+  for k, v in IB_COUNTERS.items():
+    with open(IB_PATH.format(port=1, counter=v), 'r') as f:
+      ret.update({k: int(f.read())})
+  return ret
+
+
+def monitor_netdev():
+  ret = {}
+  with open('/proc/net/dev', 'r') as f:
+    f.readline()
+    f.readline()
+    for eth in f:
+      eth = eth.split()
+      ret.update({eth[0]: {'rx_data': eth[1], 'tx_data': eth[9]}})
+  return ret
+
+
+def monitor_free_disk():
+  ret = {}
+  res = subprocess.run(
+      ['df', '-h'], check=True, stdout=subprocess.PIPE,
+      encoding='utf-8').stdout
+  for part in res.splitlines():
+    part = part.split()
+    if part[5] in ['/', '/home/shared']:
+      ret.update({
+          part[5]: {
+              'usage': int(part[4][:-1]),
+              'avail': part[3][:-1]
+          }
+      })
+  return ret
+
+
 def monitor():
   sensors_stat = monitor_sensors()
   return {
@@ -75,7 +119,10 @@ def monitor():
       'gpu': monitor_gpu(),
       'sys': {
           'power': sensors_stat['power'],
-      }
+      },
+      #'ib': monitor_infiniband(),
+      #'net': monitor_netdev(),
+      #'disk': monitor_free_disk(),
   }
 
 
@@ -94,9 +141,10 @@ if __name__ == '__main__':
   ctx = zmq.Context()
   sock = ctx.socket(zmq.PUB)
   sock.connect(f'tcp://{args.host}:{args.port}')
-  data = {'host': platform.node()}
+  node = platform.node().encode('utf-8')
+  data = {}
   while True:
     data.update(monitor())
-    sock.send_json(data)
-    break
+    sock.send_multipart([node, json.dumps(data).encode('utf-8')])
+    #break
     sleep(1)

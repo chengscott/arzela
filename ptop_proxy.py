@@ -23,9 +23,8 @@ if __name__ == "__main__":
   args = parser.parse_args()
   # ZMQ forwarder device
   ctx = zmq.Context()
-  frontend = ctx.socket(zmq.SUB)
-  frontend.setsockopt(zmq.SUBSCRIBE, b"")
+  frontend = ctx.socket(zmq.XSUB)
   frontend.bind(f'tcp://*:{args.port[0]}')
-  backend = ctx.socket(zmq.PUB)
+  backend = ctx.socket(zmq.XPUB)
   backend.bind(f'tcp://*:{args.port[1]}')
   zmq.device(zmq.FORWARDER, frontend, backend)
