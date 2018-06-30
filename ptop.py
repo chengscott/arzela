@@ -129,22 +129,28 @@ def monitor():
 if __name__ == '__main__':
   parser = argparse.ArgumentParser()
   parser.add_argument(
-      '-p',
-      '--port',
+      '-pub',
+      '--pub-port',
       help='PUB server (default: %(default)s)',
       default=7777,
       type=int)
   parser.add_argument(
-      '--host', help='SUB proxy', default='localhost', type=str)
+      '-rep',
+      '--rep-port',
+      help='REP server (default: %(default)s)',
+      default=7778,
+      type=int)
+  parser.add_argument('--host', help='proxy', default='localhost', type=str)
   args = parser.parse_args()
   # ZMQ PUB server
   ctx = zmq.Context()
-  sock = ctx.socket(zmq.PUB)
-  sock.connect(f'tcp://{args.host}:{args.port}')
+  pub_sock = ctx.socket(zmq.PUB)
+  pub_sock.connect(f'tcp://{args.host}:{args.pub_port}')
+  rep_sock = ctx.socket(zmq.REP)
+  rep_sock.connect(f'tcp://{args.host}:{args.rep_port}')
   node = platform.node().encode('utf-8')
   data = {}
   while True:
     data.update(monitor())
-    sock.send_multipart([node, json.dumps(data).encode('utf-8')])
-    #break
+    pub_sock.send_multipart([node, json.dumps(data).encode('utf-8')])
     sleep(1)

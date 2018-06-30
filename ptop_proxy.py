@@ -15,16 +15,28 @@ def valid_port(port):
 if __name__ == "__main__":
   parser = argparse.ArgumentParser()
   parser.add_argument(
-      '-p',
-      '--port',
+      '-pp',
+      '--proxy-port',
       help='SUB_proxy:PUB_worker (default: %(default)s)',
       default='7777:6666',
       type=valid_port)
+  parser.add_argument(
+      '-bp',
+      '--broker-port',
+      help='ROUTER_worker:DEALER_broker (default: %(default)s)',
+      default='6667:7778',
+      type=valid_port)
   args = parser.parse_args()
-  # ZMQ forwarder device
+  # ZMQ forwarder
   ctx = zmq.Context()
-  frontend = ctx.socket(zmq.XSUB)
-  frontend.bind(f'tcp://*:{args.port[0]}')
-  backend = ctx.socket(zmq.XPUB)
-  backend.bind(f'tcp://*:{args.port[1]}')
-  zmq.device(zmq.FORWARDER, frontend, backend)
+  proxy_frontend = ctx.socket(zmq.XSUB)
+  proxy_frontend.bind(f'tcp://*:{args.proxy_port[0]}')
+  proxy_backend = ctx.socket(zmq.XPUB)
+  proxy_backend.bind(f'tcp://*:{args.proxy_port[1]}')
+  zmq.proxy(proxy_frontend, proxy_backend)
+  # ZMQ proxy
+  #broker_frontend = ctx.socket(zmq.ROUTER)
+  #broker_frontend.bind(f'tcp://*:{args.broker_port[0]}')
+  #broker_backend = ctx.socket(zmq.DEALER)
+  #broker_backend.bind(f'tcp://*:{args.broker_port[1]}')
+  #zmq.proxy(broker_frontend, broker_backend)
