@@ -7,77 +7,107 @@ import subprocess
 from time import sleep
 import zmq
 
-SENSORS_POWER = re.compile(r'power1_average: (\d+\.\d+)')
-SENSORS_TEMP = re.compile(r'temp\d+_input: (\d+\.\d+)')
+#from pynvml import (nvmlInit, nvmlDeviceGetHandleByIndex, nvmlDeviceGetCount,
+#                    nvmlDeviceGetClockInfo, nvmlDeviceGetTemperature,
+#                    nvmlDeviceGetPowerUsage, nvmlDeviceGetUtilizationRates,
+#                    NVML_CLOCK_GRAPHICS, NVML_TEMPERATURE_GPU)
 
 
+def static(**kwargs):
+  def decorate(func):
+    for k in kwargs:
+      setattr(func, k, kwargs[k])
+    return func
+
+  return decorate
+
+
+@static(
+    re_power=re.compile(r'power1_average: (\d+\.\d+)'),
+    re_temp=re.compile(r'temp\d+_input: (\d+\.\d+)'))
 def monitor_sensors():
+  # /sys/class/hwmon/hwmon*/temp*_input
   res = subprocess.run(
       ['sensors', '-u'], check=True, stdout=subprocess.PIPE,
       encoding='utf-8').stdout
   return {
-      'temp': list(map(float, SENSORS_TEMP.findall(res))),
-      'power': sum(map(float, SENSORS_POWER.findall(res)))
+      'temp': list(map(float, monitor_sensors.re_power.findall(res))),
+      'power': sum(map(float, monitor_sensors.re_temp.findall(res)))
   }
 
 
-CPU_FREQ = re.compile(r'cpu MHz\t\t: (\d+\.\d+)')
-
-
+@static(re_freq=re.compile(r'cpu MHz\t\t: (\d+\.\d+)'))
 def monitor_cpu():
   ret = []
+  # /sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq
   with open('/proc/cpuinfo', 'r') as f:
-    ret.extend(map(float, CPU_FREQ.findall(f.read())))
+    ret.extend(map(float, monitor_cpu.re_freq.findall(f.read())))
   return ret
 
 
+@static(path='/sys/devices/virtual/powercap/intel-rapl/intel-rapl:{i}/'
+        'constraint_0_power_limit_uw')
 def monitor_rapl():
-  RAPL_PATH = '/sys/devices/virtual/powercap/intel-rapl/intel-rapl:{i}/constraint_0_power_limit_uw'
   ret = []
-  for j in range(2):
-    with open(RAPL_PATH.format(i=j), 'r') as f:
+  for i in range(2):
+    with open(monitor_rapl.path.format(i=i), 'r') as f:
       ret.append(int(f.read()) / 10**6)
   return ret
 
 
-GPU_QUERY = {
-    'freq': 'clocks.applications.gr',
-    'power': 'power.draw',
-    'temp': 'temperature.gpu',
-    'gpu_util': 'utilization.gpu',
-    'mem_util': 'utilization.memory',
-}
-NVIDIA_SMI_QUERY = ','.join(GPU_QUERY.values())
-
-
+@static(
+    ret=['freq', 'power', 'temp', 'gpu_util', 'mem_util'],
+    #   gpu=[nvmlDeviceGetHandleByIndex(i) for i in range(nvmlDeviceGetCount())],
+    query=','.join([
+        'clocks.gr', 'power.draw', 'temperature.gpu', 'utilization.gpu',
+        'utilization.memory'
+    ]))
 def monitor_gpu():
-  # nvidia-smi stats -d pwrDraw,temp,gpuUtil,memUtil
-  res = subprocess.run(
-      [
-          'nvidia-smi', f'--query-gpu={NVIDIA_SMI_QUERY}',
-          '--format=csv,noheader,nounits'
-      ],
-      check=True,
-      stdout=subprocess.PIPE,
-      encoding='utf-8').stdout
-  res = [map(float, row.split(", ")) for row in res.splitlines()]
-  ret = list(map(list, zip(*res)))
-  return dict(zip(GPU_QUERY.keys(), ret))
+  def use_nvidia_smi():
+    res = subprocess.run(
+        [
+            'nvidia-smi', f'--query-gpu={monitor_gpu.query}',
+            '--format=csv,noheader,nounits'
+        ],
+        check=True,
+        stdout=subprocess.PIPE,
+        encoding='utf-8').stdout
+    res = [map(float, row.split(", ")) for row in res.splitlines()]
+    return list(map(list, zip(*res)))
+
+  def use_nvml():
+    gpus = monitor_gpu.gpu
+    utils = [nvmlDeviceGetUtilizationRates(gpu) for gpu in gpus]
+    return [
+        [nvmlDeviceGetClockInfo(gpu, NVML_CLOCK_GRAPHICS) for gpu in gpus],
+        [nvmlDeviceGetPowerUsage(gpu) / 1000 for gpu in gpus],
+        [nvmlDeviceGetTemperature(gpu, NVML_TEMPERATURE_GPU) for gpu in gpus],
+        [util.gpu for util in utils],
+        [util.memory for util in utils],
+    ]
+
+  ret = use_nvidia_smi()
+  return dict(zip(monitor_gpu.ret, ret))
 
 
-IB_COUNTERS = {
-    'rx_data': 'port_rcv_data',
-    'tx_data': 'port_xmit_data',
-}
+@static(
+    path='/sys/class/infiniband/mlx4_0/ports/{port}/counters/{counter}',
+    counters={
+        'rx_data': 'port_rcv_data',
+        'tx_data': 'port_xmit_data',
+    },
+    ports=[1])
+def monitor_ib():
+  def read(port, counter):
+    with open(monitor_ib.path.format(port=port, counter=counter), 'r') as f:
+      return int(f.read())
 
-
-def monitor_infiniband():
-  IB_PATH = '/sys/class/infiniband/mlx4_0/ports/{port}/counters/{counter}'
-  ret = {}
-  for k, v in IB_COUNTERS.items():
-    with open(IB_PATH.format(port=1, counter=v), 'r') as f:
-      ret.update({k: int(f.read())})
-  return ret
+  ports = monitor_ib.ports
+  return {
+      p: {k: read(p, v)
+          for k, v in monitor_ib.counters.items()}
+      for p in ports
+  }
 
 
 def monitor_netdev():
@@ -87,7 +117,7 @@ def monitor_netdev():
     f.readline()
     for eth in f:
       eth = eth.split()
-      ret.update({eth[0]: {'rx_data': eth[1], 'tx_data': eth[9]}})
+      ret.update({eth[0][:-1]: {'rx_data': eth[1], 'tx_data': eth[9]}})
   return ret
 
 
@@ -120,8 +150,8 @@ def monitor():
       'sys': {
           'power': sensors_stat['power'],
       },
-      #'ib': monitor_infiniband(),
-      #'net': monitor_netdev(),
+      'ib': monitor_ib(),
+      'eth': monitor_netdev(),
       #'disk': monitor_free_disk(),
   }
 
@@ -148,6 +178,7 @@ if __name__ == '__main__':
   pub_sock.connect(f'tcp://{args.host}:{args.pub_port}')
   rep_sock = ctx.socket(zmq.REP)
   rep_sock.connect(f'tcp://{args.host}:{args.rep_port}')
+  #nvmlInit()
   node = platform.node().encode('utf-8')
   data = {}
   while True:
