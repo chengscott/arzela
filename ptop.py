@@ -7,11 +7,6 @@ import subprocess
 from time import sleep
 import zmq
 
-#from pynvml import (nvmlInit, nvmlDeviceGetHandleByIndex, nvmlDeviceGetCount,
-#                    nvmlDeviceGetClockInfo, nvmlDeviceGetTemperature,
-#                    nvmlDeviceGetPowerUsage, nvmlDeviceGetUtilizationRates,
-#                    NVML_CLOCK_GRAPHICS, NVML_TEMPERATURE_GPU)
-
 
 def static(**kwargs):
   def decorate(func):
@@ -31,17 +26,17 @@ def monitor_sensors():
       ['sensors', '-u'], check=True, stdout=subprocess.PIPE,
       encoding='utf-8').stdout
   return {
-      'temp': list(map(float, monitor_sensors.re_power.findall(res))),
-      'power': sum(map(float, monitor_sensors.re_temp.findall(res)))
+      'temp': list(map(float, monitor_sensors.re_temp.findall(res))),
+      'power': sum(map(float, monitor_sensors.re_power.findall(res)))
   }
 
 
 @static(re_freq=re.compile(r'cpu MHz\t\t: (\d+\.\d+)'))
-def monitor_cpu():
+def monitor_cpufreq():
   ret = []
   # /sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq
   with open('/proc/cpuinfo', 'r') as f:
-    ret.extend(map(float, monitor_cpu.re_freq.findall(f.read())))
+    ret.extend(map(float, monitor_cpufreq.re_freq.findall(f.read())))
   return ret
 
 
@@ -56,8 +51,32 @@ def monitor_rapl():
 
 
 @static(
+    re_stat=re.compile(
+        r'cpu\d+ (\d+) (\d+) (\d+) (\d+) (\d+) (\d+) (\d+) (\d+) (\d+) (\d+)'))
+def monitor_cpu():
+  ret = []
+  with open('/proc/stat', 'r') as f:
+    ret = monitor_cpu.re_stat.findall(f.read())
+  ret = [tuple(map(int, t)) for t in ret]
+  ret = [(idle + iowait,
+          user + nice + sys + idle + iowait + irq + softirq + steal)
+         for user, nice, sys, idle, iowait, irq, softirq, steal, _, _ in ret]
+  ret = list(map(list, zip(*ret)))
+  return dict(zip(['idle', 'total'], ret))
+
+
+@static(re_mem=re.compile(r'(\d+) kB'))
+def monitor_memory():
+  ret = {}
+  with open('/proc/meminfo', 'r') as f:
+    ret['total'] = int(monitor_memory.re_mem.findall(f.readline())[0])
+    f.readline()
+    ret['free'] = int(monitor_memory.re_mem.findall(f.readline())[0])
+  return ret
+
+
+@static(
     ret=['freq', 'power', 'temp', 'gpu_util', 'mem_util'],
-    #   gpu=[nvmlDeviceGetHandleByIndex(i) for i in range(nvmlDeviceGetCount())],
     query=','.join([
         'clocks.gr', 'power.draw', 'temperature.gpu', 'utilization.gpu',
         'utilization.memory'
@@ -74,17 +93,6 @@ def monitor_gpu():
         encoding='utf-8').stdout
     res = [map(float, row.split(", ")) for row in res.splitlines()]
     return list(map(list, zip(*res)))
-
-  def use_nvml():
-    gpus = monitor_gpu.gpu
-    utils = [nvmlDeviceGetUtilizationRates(gpu) for gpu in gpus]
-    return [
-        [nvmlDeviceGetClockInfo(gpu, NVML_CLOCK_GRAPHICS) for gpu in gpus],
-        [nvmlDeviceGetPowerUsage(gpu) / 1000 for gpu in gpus],
-        [nvmlDeviceGetTemperature(gpu, NVML_TEMPERATURE_GPU) for gpu in gpus],
-        [util.gpu for util in utils],
-        [util.memory for util in utils],
-    ]
 
   ret = use_nvidia_smi()
   return dict(zip(monitor_gpu.ret, ret))
@@ -117,7 +125,10 @@ def monitor_netdev():
     f.readline()
     for eth in f:
       eth = eth.split()
-      ret.update({eth[0][:-1]: {'rx_data': eth[1], 'tx_data': eth[9]}})
+      ret[eth[0][:-1]] = {
+          'rx_data': int(eth[1]),
+          'tx_data': int(eth[9]),
+      }
   return ret
 
 
@@ -129,12 +140,7 @@ def monitor_free_disk():
   for part in res.splitlines():
     part = part.split()
     if part[5] in ['/', '/home/shared']:
-      ret.update({
-          part[5]: {
-              'usage': int(part[4][:-1]),
-              'avail': part[3][:-1]
-          }
-      })
+      ret[part[5]] = {'usage': int(part[4][:-1]), 'available': part[3]}
   return ret
 
 
@@ -142,11 +148,13 @@ def monitor():
   sensors_stat = monitor_sensors()
   return {
       'cpu': {
-          'freq': monitor_cpu(),
+          'freq': monitor_cpufreq(),
           'power': monitor_rapl(),
           'temp': sensors_stat['temp'],
       },
       'gpu': monitor_gpu(),
+      'mem': monitor_memory(),
+      'cpu_util': monitor_cpu(),
       'sys': {
           'power': sensors_stat['power'],
       },
@@ -178,10 +186,9 @@ if __name__ == '__main__':
   pub_sock.connect(f'tcp://{args.host}:{args.pub_port}')
   rep_sock = ctx.socket(zmq.REP)
   rep_sock.connect(f'tcp://{args.host}:{args.rep_port}')
-  #nvmlInit()
   node = platform.node().encode('utf-8')
   data = {}
   while True:
-    data.update(monitor())
+    data = monitor()
     pub_sock.send_multipart([node, json.dumps(data).encode('utf-8')])
     sleep(1)
