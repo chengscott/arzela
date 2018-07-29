@@ -6,6 +6,14 @@ import zmq
 
 
 def main():
+  def post(req):
+    response = requests.post(
+        'http://localhost:8086/write',
+        auth=('worker', 'nthu-scc'),
+        params={'db': 'ptop'},
+        data=req.encode())
+
+  prev_data = {'cpu_util': {}}
   while True:
     try:
       [node, raw_data] = sub_sock.recv_multipart()
@@ -15,15 +23,29 @@ def main():
     raw_data = json.loads(raw_data.decode('utf-8'))
     print(f"Received data: {raw_data}")
     for item in ['cpu', 'gpu']:
-      for k, stats in raw_data[item].items():
-        field_data = ','.join([f'{item}_{i}={v}' for i, v in enumerate(stats)])
-        data = f'{item}_{k},host={node} {field_data}'
-        #print(data)
-        response = requests.post(
-            'http://localhost:8086/write',
-            auth=('worker', 'nthu-scc'),
-            params={'db': 'ptop'},
-            data=data.encode())
+      if item in raw_data:
+        for k, stats in raw_data[item].items():
+          field_data = ','.join(
+              [f'{item}_{i}={v}' for i, v in enumerate(stats)])
+          post(f'{item}_{k},host={node} {field_data}')
+    if 'mem' in raw_data:
+      total, free = raw_data['mem']['total'], raw_data['mem']['free']
+      usage, util = total - free, (1 - free / total) * 100
+      post(f'mem_util,host={node} usage={usage},util={util}')
+    if 'cpu_util' in raw_data:
+      data = list(
+          zip(raw_data['cpu_util']['idle'], raw_data['cpu_util']['total']))
+      if node not in prev_data['cpu_util']:
+        prev_data['cpu_util'][node] = [(0, 0)] * 30
+      cpu_util = [
+          (1 - (idle - prev_idle) / (total - prev_total)) * 100
+          for (idle,
+               total), (prev_idle,
+                        prev_total) in zip(data, prev_data['cpu_util'][node])
+      ]
+      prev_data['cpu_util'][node] = data
+      field_data = ','.join([f'cpu_{i}={v}' for i, v in enumerate(cpu_util)])
+      post(f'cpu_util,host={node} {field_data}')
 
 
 if __name__ == "__main__":

@@ -6,6 +6,14 @@ import zmq
 
 
 def main():
+  def post(req):
+    print(req)
+    response = requests.post(
+        'http://localhost:8086/write',
+        auth=('worker', 'nthu-scc'),
+        params={'db': 'ptop'},
+        data=req.encode())
+
   prev_data = {}
   while True:
     try:
@@ -16,22 +24,18 @@ def main():
     raw_data = json.loads(raw_data.decode('utf-8'))
     #print(f"Received data: {raw_data}")
     data = {
-        f'{types},host={node},interface={name}': (int(net['rx_data']), int(net['tx_data']))
-        for types in ['eth', 'ib'] for name, net in raw_data[types].items()
+        f'{item},host={node},interface={name}': (net['rx_data'],
+                                                 net['tx_data'])
+        for item in ['eth', 'ib'] if item in raw_data
+        for name, net in raw_data[item].items()
     }
-    if list(data.keys())[0] not in prev_data:
-      prev_data.update(data)
+    if node not in prev_data:
+      prev_data[node] = data
     for key, (rx, tx) in data.items():
-      prev_rx, prev_tx = prev_data[key]
+      prev_rx, prev_tx = prev_data[node][key]
       drx, dtx = rx - prev_rx, tx - prev_tx
-      req = f'{key} rx={drx},tx={dtx}'
-      print(req)
-      response = requests.post(
-            'http://localhost:8086/write',
-            auth=('worker', 'nthu-scc'),
-            params={'db': 'ptop'},
-            data=req.encode())
-    prev_data.update(data)
+      post(f'{key} rx={drx},tx={dtx}')
+    prev_data[node] = data
 
 
 if __name__ == "__main__":
