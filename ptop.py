@@ -1,5 +1,7 @@
 #!/usr/bin/env python3.6
 import argparse
+from heapq import nlargest
+from glob import glob
 import json
 import platform
 import re
@@ -75,6 +77,37 @@ def monitor_memory():
   return ret
 
 
+def monitor_process():
+  res = []
+  uptime = 0
+  with open('/proc/uptime') as f:
+    uptime = float(f.read().split()[0])
+  for proc in glob('/proc/*[0-9]*/stat'):
+    try:
+      with open(proc, 'r') as f:
+        stat = f.read().split()
+        pid, name = int(stat[0]), stat[1][1:-1]
+        total = sum(map(int, stat[13:15]))
+        seconds = uptime - (int(stat[21]) / 100)
+        usage = 100 * ((total / 100) / seconds)
+        res.append((pid, name, usage))
+    except FileNotFoundError:
+      continue
+  res = nlargest(10, res, key=lambda kv: kv[2])
+  ret = []
+  for pid, name, usage in res:
+    try:
+      with open(f'/proc/{pid}/cmdline') as f:
+        cmd = f.read().replace('\x00', ' ').strip()
+        if cmd:
+          ret.append((cmd, usage))
+        else:
+          ret.append((name, usage))
+    except FileNotFoundError:
+      continue
+  return ret
+
+
 @static(
     ret=['freq', 'power', 'temp', 'gpu_util', 'mem_util'],
     query=','.join([
@@ -99,22 +132,21 @@ def monitor_gpu():
 
 
 @static(
-    path='/sys/class/infiniband/mlx4_0/ports/{port}/counters/{counter}',
+    path=glob('/sys/class/infiniband/*/ports/*/counters/'),
     counters={
         'rx_data': 'port_rcv_data',
         'tx_data': 'port_xmit_data',
-    },
-    ports=[1])
+    })
 def monitor_ib():
-  def read(port, counter):
-    with open(monitor_ib.path.format(port=port, counter=counter), 'r') as f:
+  def read(path, counter):
+    with open(path + counter, 'r') as f:
       return int(f.read())
 
-  ports = monitor_ib.ports
   return {
-      p: {k: read(p, v)
-          for k, v in monitor_ib.counters.items()}
-      for p in ports
+      int(p.split('/')[-3]):
+      {k: read(p, v)
+       for k, v in monitor_ib.counters.items()}
+      for p in monitor_ib.path
   }
 
 
@@ -155,6 +187,7 @@ def monitor():
       'gpu': monitor_gpu(),
       'mem': monitor_memory(),
       'cpu_util': monitor_cpu(),
+      #'process': monitor_process(),
       'sys': {
           'power': sensors_stat['power'],
       },
