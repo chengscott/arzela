@@ -4,7 +4,7 @@ import json
 import zmq
 
 
-def main():
+def run(sub_sock):
   while True:
     try:
       [node, raw_data] = sub_sock.recv_multipart()
@@ -15,6 +15,14 @@ def main():
     print(f"Received data: {raw_data}")
 
 
+def connect(host, sub_port):
+  ctx = zmq.Context()
+  sub_sock = ctx.socket(zmq.SUB)
+  sub_sock.setsockopt(zmq.SUBSCRIBE, b"")
+  sub_sock.connect(f'tcp://{host}:{sub_port}')
+  return sub_sock
+
+
 if __name__ == "__main__":
   parser = argparse.ArgumentParser()
   parser.add_argument(
@@ -23,20 +31,7 @@ if __name__ == "__main__":
       help='SUB worker (default: %(default)s)',
       default=6666,
       type=int)
-  parser.add_argument(
-      '-req',
-      '--req-port',
-      help='REQ worker (default: %(default)s)',
-      default=6667,
-      type=int)
   parser.add_argument('--host', help='proxy', default='localhost', type=str)
   args = parser.parse_args()
-  # ZMQ SUB worker
-  ctx = zmq.Context()
-  sub_sock = ctx.socket(zmq.SUB)
-  sub_sock.setsockopt(zmq.SUBSCRIBE, b"")
-  sub_sock.connect(f'tcp://{args.host}:{args.sub_port}')
-  # ZMQ REQ worker
-  req_sock = ctx.socket(zmq.REQ)
-  req_sock.connect(f'tcp://{args.host}:{args.req_port}')
-  main()
+  sub_sock = connect(args.host, args.sub_port)
+  run(sub_sock)

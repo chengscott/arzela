@@ -5,12 +5,13 @@ import requests
 import zmq
 
 
-def main():
+def run(sub_sock):
   def post(req):
+    #print(req)
     response = requests.post(
         'http://localhost:8086/write',
         auth=('worker', 'nthu-scc'),
-        params={'db': 'ptop'},
+        params={'db': 'pymon'},
         data=req.encode())
 
   prev_data = {'cpu_util': {}}
@@ -28,8 +29,8 @@ def main():
           field_data = ','.join(
               [f'{item}_{i}={v}' for i, v in enumerate(stats)])
           post(f'{item}_{k},host={node} {field_data}')
-    if 'mem' in raw_data:
-      total, free = raw_data['mem']['total'], raw_data['mem']['free']
+    if 'memory' in raw_data:
+      total, free = raw_data['memory']['total'], raw_data['memory']['free']
       usage, util = total - free, (1 - free / total) * 100
       post(f'mem_util,host={node} usage={usage},util={util}')
     if 'cpu_util' in raw_data:
@@ -48,6 +49,14 @@ def main():
       post(f'cpu_util,host={node} {field_data}')
 
 
+def connect(host, sub_port):
+  ctx = zmq.Context()
+  sub_sock = ctx.socket(zmq.SUB)
+  sub_sock.setsockopt(zmq.SUBSCRIBE, b"")
+  sub_sock.connect(f'tcp://{host}:{sub_port}')
+  return sub_sock
+
+
 if __name__ == "__main__":
   parser = argparse.ArgumentParser()
   parser.add_argument(
@@ -58,9 +67,5 @@ if __name__ == "__main__":
       type=int)
   parser.add_argument('--host', help='proxy', default='localhost', type=str)
   args = parser.parse_args()
-  # ZMQ SUB worker
-  ctx = zmq.Context()
-  sub_sock = ctx.socket(zmq.SUB)
-  sub_sock.setsockopt(zmq.SUBSCRIBE, b"")
-  sub_sock.connect(f'tcp://{args.host}:{args.sub_port}')
-  main()
+  sub_sock = connect(args.host, args.sub_port)
+  run(sub_sock)

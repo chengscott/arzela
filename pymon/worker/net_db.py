@@ -5,13 +5,13 @@ import requests
 import zmq
 
 
-def main():
+def run(sub_sock):
   def post(req):
     print(req)
     response = requests.post(
         'http://localhost:8086/write',
         auth=('worker', 'nthu-scc'),
-        params={'db': 'ptop'},
+        params={'db': 'pymon'},
         data=req.encode())
 
   prev_data = {}
@@ -22,7 +22,7 @@ def main():
       continue
     node = node.decode('utf-8')
     raw_data = json.loads(raw_data.decode('utf-8'))
-    #print(f"Received data: {raw_data}")
+    print(f"Received data: {raw_data}")
     data = {
         f'{item},host={node},interface={name}': (net['rx_data'],
                                                  net['tx_data'])
@@ -38,6 +38,14 @@ def main():
     prev_data[node] = data
 
 
+def connect(host, sub_port):
+  ctx = zmq.Context()
+  sub_sock = ctx.socket(zmq.SUB)
+  sub_sock.setsockopt(zmq.SUBSCRIBE, b"")
+  sub_sock.connect(f'tcp://{host}:{sub_port}')
+  return sub_sock
+
+
 if __name__ == "__main__":
   parser = argparse.ArgumentParser()
   parser.add_argument(
@@ -48,9 +56,5 @@ if __name__ == "__main__":
       type=int)
   parser.add_argument('--host', help='proxy', default='localhost', type=str)
   args = parser.parse_args()
-  # ZMQ SUB worker
-  ctx = zmq.Context()
-  sub_sock = ctx.socket(zmq.SUB)
-  sub_sock.setsockopt(zmq.SUBSCRIBE, b"")
-  sub_sock.connect(f'tcp://{args.host}:{args.sub_port}')
-  main()
+  sub_sock = connect(args.host, args.sub_port)
+  run(sub_sock)
