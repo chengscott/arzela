@@ -11,7 +11,7 @@ def run(sub_sock):
     response = requests.post(
         'http://localhost:8086/write',
         auth=('worker', 'nthu-scc'),
-        params={'db': 'pymon'},
+        params={'db': 'arzela'},
         data=req.encode())
 
   prev_data = {}

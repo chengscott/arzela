@@ -1,18 +1,18 @@
-# pymon
+# arzela
 
 ## Installation
 
 ```shell
-pip install pymon
+pip install arzela
 ```
 
 ## Model
 
 - Server
-  - {`pymon`}\*n
-  - `pymon proxy` \*1
+  - {`arzela`}\*n
+  - `arzela proxy` \*1
 - Client
-  - {`pymon worker example`}\*m
+  - {`arzela worker example`}\*m
   - or a customized one
 
 ## Grafana
@@ -22,11 +22,11 @@ pip install pymon
 - set `auth-enabled = true` in `influxdb.conf`
 
 ```
-create database pymon
-use pymon
+create database arzela
+use arzela
 # create user admin with password 'admin' with all PRIVILEGES
 create user grafana with password 'grafana'
-grant read on pymon to grafana
-create user worker with password 'worker-password'
-grant write on pymon to worker
+grant read on arzela to grafana
+create user worker with password 'ascoli'
+grant write on arzela to worker
 ```
