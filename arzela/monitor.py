@@ -153,8 +153,9 @@ class Monitor:
           yield key, int(f.read())
 
     for path in self.__ib_path:
-      port = int(path.split('/')[-3])
-      yield port, dict(read(path))
+      pth = path.split('/')
+      hca = pth[-5] + ':' + pth[-3]
+      yield hca, dict(read(path))
 
   @staticmethod
   def collect_netdev():
