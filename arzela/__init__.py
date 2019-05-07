@@ -1,6 +1,7 @@
 """Distributed System Monitor"""
 __author__ = 'chengscott'
 __version__ = '0.2'
+f'Python >= 3.6 Required'
 import argparse
 
 
