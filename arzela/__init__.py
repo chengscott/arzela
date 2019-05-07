@@ -11,14 +11,14 @@ def run_proxy(proxy_port):
   proxy.bind(proxy_port)
 
 
-def run_worker(mod, host, sub_port):
+def run_worker(mod, host, sub_port, ssh_host):
   if mod == 'example':
     import arzela.worker.example as worker
   elif mod == 'db':
     import arzela.worker.db as worker
   elif mod == 'net_db':
     import arzela.worker.net_db as worker
-  sub_sock = worker.connect(host, sub_port)
+  sub_sock = worker.connect(host, sub_port, ssh_host)
   worker.run(sub_sock)
 
 
@@ -76,11 +76,13 @@ def run_main():
       type=int)
   worker_parser.add_argument(
       '--host', help='proxy', default='localhost', type=str)
+  worker_parser.add_argument(
+      '-ssh', '--ssh-host', help='ssh tunnel', type=str)
   args = parser.parse_args()
   if args.command == 'proxy':
     run_proxy(args.proxy_port)
   elif args.command == 'worker':
-    run_worker(args.type, args.host, args.sub_port)
+    run_worker(args.type, args.host, args.sub_port, args.ssh_host)
   else:
     run_arzela(args.host, args.pub_port)
 

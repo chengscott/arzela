@@ -15,6 +15,10 @@ pip install arzela
   - {`arzela worker example`}\*m
   - or a customized one
 
+Environment Variables:
+- `INFLUX_USERNAME`
+- `INFLUX_PASSWORD`
+
 ## Grafana
 
 ## InfluxDB
